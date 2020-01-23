@@ -6754,3 +6754,31 @@ end:
   if (raise_error)
     throw LIBRAW_EXCEPTION_IO_CORRUPT;
 }
+
+void dump_128x(const char* label, ushort (*image)[4]) {
+  // these are values specific to the file; image_width and image_height
+  int width = 6032;
+  int height = 4028;
+
+  int crop_width = 512;
+  int crop_height = 512;
+  int start_col = 3834;
+  int start_row = 1168;
+
+  // Mad security vulnerability here
+  char path[256];
+  sprintf(path, "/tmp/%s.ppm", label);
+  // Pretty sure we want binary here even if we're using text because we don't
+  // want line-ending conversions
+  FILE* f = fopen(path, "wb");
+  fprintf(f, "P3\n%d %d\n16384\n", crop_width, crop_height);
+  for (int row = start_row; row < start_row + crop_height; row++) {
+    for (int col = start_col; col < start_col + crop_width; col++) {
+      ushort* pixel = image[row*width + col];
+      fprintf(f, "%d %d %d\n", pixel[0], pixel[1], pixel[2]);
+    }
+  }
+  fflush(f);
+  fclose(f);
+  printf("dumped to %s\n", path);
+}

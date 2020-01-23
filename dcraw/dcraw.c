@@ -6686,7 +6686,7 @@ void CLASS scale_colors()
     printf("scale_mul %f %f %f %f\n", scale_mul[0], scale_mul[1], scale_mul[2], scale_mul[3]);
   }
   else {
-    printf("not scaling\n");
+    printf("scale coefs all 1s (i.e. don't scale)\n");
     FORC4 scale_mul[c] = 1.0;
   }
   printf("scale_mul %f %f %f %f\n", scale_mul[0], scale_mul[1], scale_mul[2], scale_mul[3]);
@@ -6706,9 +6706,14 @@ void CLASS scale_colors()
   }
   size = iheight * iwidth;
 #ifdef LIBRAW_LIBRARY_BUILD
-    printf("scaling colors using loop\n");
+  printf("scaling colors using loop\n");
+  printf("before\n");
+  dump_128x("prescale", image);
   scale_colors_loop(scale_mul);
+  printf("after\n");
+  dump_128x("postscale", image);
 #else
+  printf("Shouldn't see this\n");
   for (i = 0; i < size * 4; i++)
   {
     if (!(val = ((ushort *)image)[i]))

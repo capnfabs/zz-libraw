@@ -2,3 +2,5 @@
 bin/
 lib/
 object/
+# Generated from makefile
+internal/

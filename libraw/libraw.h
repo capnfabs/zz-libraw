@@ -109,6 +109,8 @@ extern "C"
   DllDef libraw_lensinfo_t *libraw_get_lensinfo(libraw_data_t *lr);
   DllDef libraw_imgother_t *libraw_get_imgother(libraw_data_t *lr);
 
+  void dump_128x(const char* label, ushort (*image)[4]);
+
 #ifdef __cplusplus
 }
 #endif
