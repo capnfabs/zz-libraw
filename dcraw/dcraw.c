@@ -6886,11 +6886,11 @@ void CLASS lin_interpolate_loop(int code[16][16][32], int size)
           // unpack
           int *tip = ip + 3*i;
           int offset = tip[0];
-          int scale = tip[1];
+          int shift = tip[1];
           int color = tip[2];
           // execute
           // printf("Executing coef %d\n", i);
-          sum[color] += pix[offset] << scale;
+          sum[color] += pix[offset] << shift;
       }
       // Skip past these coefficient-y things, we're done with them.
       ip += 3*num_coefs;
@@ -6962,6 +6962,7 @@ void CLASS lin_interpolate()
           // - 2 for the target pixel, but the target pixel is always its own color, so this never occurs.
           assert(shift == 0 || shift == 1);
           // End result: add 2 to sum if it's a direct neighbour, add 1 to sum if it's a diagonal neighbour.
+          // In the end this is sum(2 every time there's a direct neighbour, 1 otherwise)
           sum[color] += 1 << shift;
         }
       // WTF is this?
@@ -6974,7 +6975,11 @@ void CLASS lin_interpolate()
       {
         // At the end of the structure pack in the color
         *ip++ = c;
-        // Something to do with the sum.
+        // Pretty sure this is never 0?
+        assert(sum[c] != 0);
+        // I think this is just weighted average code.
+        // So you add all the things together, doubling closer coefficients
+        // Then multiply by 256 * sum, then divide by 156 (>> 8)
         *ip++ = sum[c] > 0 ? 256 / sum[c] : 0;
       }
     }
