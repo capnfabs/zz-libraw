@@ -4915,6 +4915,7 @@ int LibRaw::dcraw_process(void)
 
     if (P1.is_foveon)
     {
+      printf("FOVETRON\n");
       if (load_raw == &LibRaw::x3f_load_raw)
       {
         // Filter out zeroes
@@ -4927,6 +4928,7 @@ int LibRaw::dcraw_process(void)
 
     if (O.green_matching && !O.half_size)
     {
+      printf("GREEN MATCHING\n");
       green_matching();
     }
 
@@ -4944,7 +4946,10 @@ int LibRaw::dcraw_process(void)
     if(callbacks.pre_preinterpolate_cb)
 	(callbacks.pre_preinterpolate_cb)(this);
 
+    printf("Preinterpolating\n");
     pre_interpolate();
+    dump_128x("post-preinterpolate", imgdata.image);
+    printf("Done preinterpolating\n");
 
     SET_PROC_FLAG(LIBRAW_PROGRESS_PRE_INTERPOLATE);
 
@@ -4961,7 +4966,9 @@ int LibRaw::dcraw_process(void)
     {
       expos = O.exp_shift;
       preser = O.exp_preser;
+      printf("pre exposure correction\n");
       exp_bef(expos, preser);
+      printf("post exposure correction\n");
     }
 
     if(callbacks.pre_interpolate_cb)
@@ -4970,8 +4977,10 @@ int LibRaw::dcraw_process(void)
     /* post-exposure correction fallback */
     if (P1.filters && !O.no_interpolation)
     {
-      if (noiserd > 0 && P1.colors == 3 && P1.filters)
+      if (noiserd > 0 && P1.colors == 3 && P1.filters) {
+        printf("This looks like noise reduction but i'm not sure\n");
         fbdd(noiserd);
+      }
 
       if (P1.filters > 1000 && callbacks.interpolate_bayer_cb)
         (callbacks.interpolate_bayer_cb)(this);
@@ -4986,7 +4995,10 @@ int LibRaw::dcraw_process(void)
       else if (P1.filters == LIBRAW_XTRANS)
       {
         // Fuji X-Trans
+        printf("Eyyyy let's do some xtrans interpolation\n");
         xtrans_interpolate(quality > 2 ? 3 : 1);
+        dump_128x("post-xtrans", imgdata.image);
+        printf("Done xtrans\n");
       }
       else if (quality == 3)
         ahd_interpolate(); // really don't need it here due to fallback op
@@ -5003,6 +5015,8 @@ int LibRaw::dcraw_process(void)
         ahd_interpolate();
         imgdata.process_warnings |= LIBRAW_WARN_FALLBACK_TO_AHD;
       }
+      dump_128x("post-interpolate", imgdata.image);
+      printf("Done interpolate\n");
 
       SET_PROC_FLAG(LIBRAW_PROGRESS_INTERPOLATE);
     }

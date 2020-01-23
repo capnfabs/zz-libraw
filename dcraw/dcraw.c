@@ -156,7 +156,7 @@ double pixel_aspect, aber[4] = {1, 1, 1, 1}, gamm[6] = {0.45, 4.5, 0, 0, 0, 0};
 float bright = 1, user_mul[4] = {0, 0, 0, 0}, threshold = 0;
 int mask[8][4];
 int half_size = 0, four_color_rgb = 0, document_mode = 0, highlight = 0;
-int verbose = 0, use_auto_wb = 0, use_camera_wb = 0, use_camera_matrix = 1;
+int verbose = 1, use_auto_wb = 0, use_camera_wb = 0, use_camera_matrix = 1;
 int output_color = 1, output_bps = 8, output_tiff = 0, med_passes = 0;
 int no_auto_bright = 0;
 unsigned greybox[4] = {0, 0, UINT_MAX, UINT_MAX};
@@ -6773,8 +6773,10 @@ void CLASS pre_interpolate()
 #endif
   if (shrink)
   {
+    printf("Shrink\n");
     if (half_size)
     {
+      printf("halfsize\n");
       height = iheight;
       width = iwidth;
       if (filters == 9)
@@ -6795,6 +6797,7 @@ void CLASS pre_interpolate()
     }
     else
     {
+      printf("Not halfsize\n");
       img = (ushort(*)[4])calloc(height, width * sizeof *img);
       merror(img, "pre_interpolate()");
       for (row = 0; row < height; row++)
@@ -6810,6 +6813,7 @@ void CLASS pre_interpolate()
   }
   if (filters > 1000 && colors == 3)
   {
+    printf("Dunno what this is doing but it looks like green mix for just beyer or something idk\n");
     mix_green = four_color_rgb ^ half_size;
     if (four_color_rgb | half_size)
       colors++;
@@ -6853,22 +6857,57 @@ void CLASS border_interpolate(int border)
 
 void CLASS lin_interpolate_loop(int code[16][16][32], int size)
 {
-  int row;
-  for (row = 1; row < height - 1; row++)
+  // Note: skips borders
+  for (int row = 1; row < height - 1; row++)
   {
-    int col, *ip;
-    ushort *pix;
-    for (col = 1; col < width - 1; col++)
+    for (int col = 1; col < width - 1; col++)
     {
-      int i;
+      // The pixel, this is 4 values
+      ushort *pix = image[row * width + col];
+      // Look up the code for this index in the grid
+      int *ip = code[row % size][col % size];
+      //printf("IP at %p\n", (void*)ip);
+      // printf(
+      //   "Code is [%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d]\n",
+      //    ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], ip[12], ip[13], ip[14], ip[15], ip[16], ip[17], ip[18], ip[19], ip[20], ip[21], ip[22], ip[23], ip[24], ip[25], ip[26], ip[27], ip[28], ip[29], ip[30], ip[31]
+      // );
       int sum[4];
-      pix = image[row * width + col];
-      ip = code[row % size][col % size];
       memset(sum, 0, sizeof sum);
-      for (i = *ip++; i--; ip += 3)
-        sum[ip[2]] += pix[ip[0]] << ip[1];
-      for (i = colors; --i; ip += 2)
-        pix[ip[0]] = sum[ip[0]] * ip[1] >> 8;
+      // move an int forward
+      // THIS IS AWFUL
+      int num_coefs = ip[0];
+      // printf("Got %d coefs\n", num_coefs);
+      // printf("IP at %p\n", (void*)ip);
+      // Advance pointer, now that we have num_coefs we don't need it anymore
+      ip++;
+      // printf("IP at %p\n", (void*)ip);
+      for (int i = 0; i < num_coefs; i++) {
+          // printf("Unpacking coef %d\n", i);
+          // unpack
+          int *tip = ip + 3*i;
+          int offset = tip[0];
+          int scale = tip[1];
+          int color = tip[2];
+          // execute
+          // printf("Executing coef %d\n", i);
+          sum[color] += pix[offset] << scale;
+      }
+      // Skip past these coefficient-y things, we're done with them.
+      ip += 3*num_coefs;
+      // printf("IP at %p\n", (void*)ip);
+      // Now there's one two-pair per-color (colors should be called num_colors)
+      // Excludes self-color
+      for (int i = 0; i < (colors - 1); i++) {
+        // printf("Unpacking color %d\n", i);
+        // unpack
+        int *tip = ip + 2*i;
+        int color = tip[0];
+        int b = tip[1];
+        // execute
+        // printf("Vals color=%d b=%d\n", color, b);
+        // printf("Executing color %d\n", i);
+        pix[color] = sum[color] * b >> 8;
+      }
     }
   }
 }
@@ -6889,32 +6928,58 @@ void CLASS lin_interpolate()
   if (filters == 9)
     size = 6;
   border_interpolate(1);
+  // iterate through 6x6 block
   for (row = 0; row < size; row++)
     for (col = 0; col < size; col++)
     {
+      // this is assigning to the pointer. `ip` is now equiv to `code[row][col][1]`
       ip = code[row][col] + 1;
+      // color lookup, lit 'filter color'
       f = fcol(row, col);
+      // initialise sums to 0
       memset(sum, 0, sizeof sum);
       for (y = -1; y <= 1; y++)
         for (x = -1; x <= 1; x++)
         {
+          // used later for a bitshift. You could equally well use (y == 0) || (x == 0), it's only ever 0 or 1 when it's used.
           shift = (y == 0) + (x == 0);
+          // color of offset
           color = fcol(row + y, col + x);
+          // If color is the color of the pixel, then move on...?
           if (color == f)
             continue;
+          // Each of these is a triple:
+          // - A number such that you can add it to a location into a stream of bytes to get this color
           *ip++ = (width * y + x) * 4 + color;
+          // - I don't understand what this is for yet
           *ip++ = shift;
+          // - The color in question
           *ip++ = color;
+          // I'm also not sure what this is for
+          // Shift is:
+          // - 1 for pixels that are directly next to the target pixel (not diagonal)
+          // - O otherwise
+          // - 2 for the target pixel, but the target pixel is always its own color, so this never occurs.
+          assert(shift == 0 || shift == 1);
+          // End result: add 2 to sum if it's a direct neighbour, add 1 to sum if it's a diagonal neighbour.
           sum[color] += 1 << shift;
         }
+      // WTF is this?
+      //code[row][col][0] = (distance in ints between ip and code[row][col]) / 3
       code[row][col][0] = (ip - code[row][col]) / 3;
+      // For all the colors
       FORCC
+      // If this isn't the color for this cell
       if (c != f)
       {
+        // At the end of the structure pack in the color
         *ip++ = c;
+        // Something to do with the sum.
         *ip++ = sum[c] > 0 ? 256 / sum[c] : 0;
       }
     }
+    // In the end, these coefficients are all static though so you can print
+    // them once and they should stay constant for every camera.
 #ifdef LIBRAW_LIBRARY_BUILD
   RUN_CALLBACK(LIBRAW_PROGRESS_INTERPOLATE, 1, 3);
 #endif
