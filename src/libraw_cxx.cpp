@@ -456,7 +456,7 @@ LibRaw::LibRaw(unsigned int flags) : memmgr(1024)
   callbacks.post_identify_cb = NULL;
   callbacks.pre_subtractblack_cb = callbacks.pre_scalecolors_cb = callbacks.pre_preinterpolate_cb
     = callbacks.pre_interpolate_cb = callbacks.interpolate_bayer_cb = callbacks.interpolate_xtrans_cb
-    = callbacks.post_interpolate_cb = callbacks.pre_converttorgb_cb = callbacks.post_converttorgb_cb 
+    = callbacks.post_interpolate_cb = callbacks.pre_converttorgb_cb = callbacks.post_converttorgb_cb
   = NULL;
 
   memmove(&imgdata.params.aber, &aber, sizeof(aber));
@@ -3456,11 +3456,13 @@ int LibRaw::raw2image_ex(int do_subtract_black)
 
   try
   {
+    printf("raw2image_ex let's go let's go\n");
     raw2image_start();
 
     // Compressed P1 files with bl data!
     if (is_phaseone_compressed() && imgdata.rawdata.raw_alloc)
     {
+      printf("Phase1 compressed\n");
       phase_one_allocate_tempbuffer();
       int rc = phase_one_subtract_black((ushort *)imgdata.rawdata.raw_alloc, imgdata.rawdata.raw_image);
       if (rc == 0)
@@ -3477,6 +3479,7 @@ int LibRaw::raw2image_ex(int do_subtract_black)
     unsigned save_width = S.width;
     if (~O.cropbox[2] && ~O.cropbox[3])
     {
+      printf("Crop time\n");
       int crop[4], c, filt;
       for (int c = 0; c < 4; c++)
       {
@@ -3506,6 +3509,7 @@ int LibRaw::raw2image_ex(int do_subtract_black)
       {
         crop[0] = (crop[0] / 6) * 6;
         crop[1] = (crop[1] / 6) * 6;
+        printf("Cropping xtrans, coefs = %d, %d\n", crop[0], crop[1]);
       }
       do_crop = 1;
 
@@ -4907,7 +4911,9 @@ int LibRaw::dcraw_process(void)
 
     if (!O.no_auto_scale)
     {
+      printf("Scaling colors\n");
       scale_colors();
+      printf("Done scaling colors\n");
       SET_PROC_FLAG(LIBRAW_PROGRESS_SCALE_COLORS);
     }
 
@@ -6350,7 +6356,7 @@ void LibRaw::parse_x3f()
   {
 	  libraw_internal_data.unpacker_data.meta_offset = DE->input.offset + 8;
 	  libraw_internal_data.unpacker_data.meta_length = DE->input.size - 28;
-  } 
+  }
 }
 
 INT64 LibRaw::x3f_thumb_size()

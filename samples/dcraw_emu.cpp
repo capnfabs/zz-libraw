@@ -167,6 +167,8 @@ int main(int argc, char *argv[])
   if (argc == 1)
     usage(argv[0]);
 
+  printf("HELLO\n");
+
   LibRaw RawProcessor;
   int i, arg, c, ret;
   char opm, opt, *cp, *sp;

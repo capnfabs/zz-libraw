@@ -4624,7 +4624,7 @@ void CLASS samsung3_load_raw()
 #ifdef LIBRAW_LIBRARY_BUILD
 	if(col<0) throw LIBRAW_EXCEPTION_IO_CORRUPT;
 	if(pmode<0) throw LIBRAW_EXCEPTION_IO_CORRUPT;
-	if(pmode != 7 && row>=2 && (col - '4' + "0224468"[pmode]) < 0 ) 
+	if(pmode != 7 && row>=2 && (col - '4' + "0224468"[pmode]) < 0 )
 		throw LIBRAW_EXCEPTION_IO_CORRUPT;
 #endif
         pred =
@@ -6567,10 +6567,13 @@ void CLASS scale_colors()
   RUN_CALLBACK(LIBRAW_PROGRESS_SCALE_COLORS, 0, 2);
 #endif
 
-  if (user_mul[0])
+  if (user_mul[0]) {
+    printf("Using user_mul\n");
     memcpy(pre_mul, user_mul, sizeof pre_mul);
+  }
   if (use_auto_wb || (use_camera_wb && cam_mul[0] == -1))
   {
+    printf("Using auto wb\n");
     memset(dsum, 0, sizeof dsum);
     bottom = MIN(greybox[1] + greybox[3], height);
     right = MIN(greybox[0] + greybox[2], width);
@@ -6605,6 +6608,7 @@ void CLASS scale_colors()
   }
   if (use_camera_wb && cam_mul[0] != -1)
   {
+    printf("Using camera wb\n");
     memset(sum, 0, sizeof sum);
     for (row = 0; row < 8; row++)
       for (col = 0; col < 8; col++)
@@ -6622,10 +6626,14 @@ void CLASS scale_colors()
     }
     else
 #endif
-        if (sum[0] && sum[1] && sum[2] && sum[3])
-      FORC4 pre_mul[c] = (float)sum[c + 4] / sum[c];
-    else if (cam_mul[0] && cam_mul[2])
+        if (sum[0] && sum[1] && sum[2] && sum[3]) {
+          printf("pre_mul from sum\n");
+          FORC4 pre_mul[c] = (float)sum[c + 4] / sum[c];
+        }
+    else if (cam_mul[0] && cam_mul[2]) {
+      printf("pre_mul from cam_mul\n");
       memcpy(pre_mul, cam_mul, sizeof pre_mul);
+    }
     else
     {
 #ifdef LIBRAW_LIBRARY_BUILD
@@ -15585,7 +15593,7 @@ void CLASS apply_tiff()
         break;
       }
       if (!strncmp(make, "OLYMPUS", 7) && INT64(tiff_ifd[raw].bytes) * 2ULL == INT64(raw_width) * INT64(raw_height) * 3ULL)
-#else 
+#else
       if (!strncmp(make, "OLYMPUS", 7) && tiff_ifd[raw].bytes * 2 == raw_width * raw_height * 3)
 #endif
         load_flags = 24;
@@ -17217,7 +17225,7 @@ void CLASS adobe_coeff(const char *t_make, const char *t_model
       { 4716,603,-830,-7798,15474,2480,-1496,1937,6651 } },
     { "Canon EOS 5D", 0, 0xe6c,
       { 6347,-479,-972,-8297,15954,2480,-1968,2131,7649 } },
-    { "Canon EOS 6D Mark II", 0, 0x38de, 
+    { "Canon EOS 6D Mark II", 0, 0x38de,
       { 6875,-970,-932,-4691,12459,2501,-874,1953,5809 } },
     { "Canon EOS 6D", 0, 0x3c82,
       {7034, -804, -1014, -4420, 12564, 2058, -851, 1994, 5758 } },
@@ -20198,7 +20206,7 @@ void CLASS identify()
   }
   else if (!strncmp(make, "Fujifilm", 8))
   {
-    if (!strcmp(model, "X-A3") || !strcmp(model, "X-A10") 
+    if (!strcmp(model, "X-A3") || !strcmp(model, "X-A10")
     || !strcmp(model, "X-A5") || !strcmp(model, "X-A20"))
     {
       left_margin = 0;
@@ -21251,7 +21259,7 @@ dng_skip:
    }
    if(!cmul_ok)
    {
-     if(cam_mul[0]>0) cam_mul[0] = 0;   
+     if(cam_mul[0]>0) cam_mul[0] = 0;
      cam_mul[3] = 0;
    }
   }

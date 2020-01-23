@@ -33,8 +33,8 @@ CFLAGS+= -g -I. -pedantic  -Wno-long-long -Wno-overflow  -O2
 
 # LCMS support
 # For lcms2 set -DUSE_LCMS2
-CFLAGS+=-DUSE_LCMS2 -I/opt/local/include
-LDADD+=-L/opt/local/lib -llcms
+#CFLAGS+=-DUSE_LCMS2 -I/opt/local/include
+#LDADD+=-L/opt/local/lib -llcms
 
 # Jasper support for RedCine
 CFLAGS+=-DUSE_JASPER -I/opt/local/include
@@ -103,7 +103,7 @@ bin/half_mt: lib/libraw_r.a samples/half_mt.c
 	$(CC) -pthread ${CFLAGS} -o bin/half_mt samples/half_mt.c -L./lib -lraw_r  -lm -lstdc++  ${LDADD}
 
 bin/dcraw_emu: lib/libraw.a samples/dcraw_emu.cpp
-	$(CXX) ${CFLAGS} -o bin/dcraw_emu samples/dcraw_emu.cpp -L./lib -lraw_r  -lm ${LDADD}
+	$(CXX) ${CFLAGS} -o bin/dcraw_emu samples/dcraw_emu.cpp lib/libraw.a -lm ${LDADD}
 
 dcraw_binaries: bin/dcraw_dist
 
