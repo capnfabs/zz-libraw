@@ -6659,9 +6659,13 @@ void CLASS scale_colors()
     pre_mul[3] = colors < 4 ? pre_mul[1] : 1;
   dark = black;
   sat = maximum;
-  if (threshold)
+  if (threshold) {
+    printf("denoising\n");
     wavelet_denoise();
+  }
+  printf("maximum %d, black %d\n", maximum, black);
   maximum -= black;
+  printf("maximum %d\n", maximum);
   for (dmin = DBL_MAX, dmax = c = 0; c < 4; c++)
   {
     if (dmin > pre_mul[c])
@@ -6669,14 +6673,25 @@ void CLASS scale_colors()
     if (dmax < pre_mul[c])
       dmax = pre_mul[c];
   }
-  if (!highlight)
+  printf("dmax, dmin = %f, %f\n", dmax, dmin);
+  if (!highlight) {
+    printf("Not highlight, using dmin\n");
     dmax = dmin;
-  if(dmax >= 0.00001 && maximum >= 1)
-     FORC4 scale_mul[c] = (pre_mul[c] /= dmax) * 65535.0 / maximum;
-  else
-     FORC4 scale_mul[c] = 1.0;
+  }
+  if(dmax >= 0.00001 && maximum >= 1) {
+    printf("scaling using pre_mul %f %f %f %f\n", pre_mul[0], pre_mul[1], pre_mul[2], pre_mul[3]);
+    printf("dmax is %f, maximum is %d\n", dmax, maximum);
+    FORC4 scale_mul[c] = (pre_mul[c] /= dmax) * 65535.0 / maximum;
+    printf("pre_mul now %f %f %f %f\n", pre_mul[0], pre_mul[1], pre_mul[2], pre_mul[3]);
+    printf("scale_mul %f %f %f %f\n", scale_mul[0], scale_mul[1], scale_mul[2], scale_mul[3]);
+  }
+  else {
+    printf("not scaling\n");
+    FORC4 scale_mul[c] = 1.0;
+  }
+  printf("scale_mul %f %f %f %f\n", scale_mul[0], scale_mul[1], scale_mul[2], scale_mul[3]);
 #ifdef DCRAW_VERBOSE
-  if (verbose)
+  if (1)
   {
     fprintf(stderr, _("Scaling with darkness %d, saturation %d, and\nmultipliers"), dark, sat);
     FORC4 fprintf(stderr, " %f", pre_mul[c]);
@@ -6685,11 +6700,13 @@ void CLASS scale_colors()
 #endif
   if (filters > 1000 && (cblack[4] + 1) / 2 == 1 && (cblack[5] + 1) / 2 == 1)
   {
+    printf("Bayer black sub\n");
     FORC4 cblack[FC(c / 2, c % 2)] += cblack[6 + c / 2 % cblack[4] * cblack[5] + c % 2 % cblack[5]];
     cblack[4] = cblack[5] = 0;
   }
   size = iheight * iwidth;
 #ifdef LIBRAW_LIBRARY_BUILD
+    printf("scaling colors using loop\n");
   scale_colors_loop(scale_mul);
 #else
   for (i = 0; i < size * 4; i++)

@@ -996,9 +996,15 @@ int LibRaw::adjust_maximum()
   else
     auto_threshold = O.adjust_maximum_thr;
 
+  printf("Adjusting max with threshold %f\n", auto_threshold);
+
+  // By this point, data_maximum is equal to the max value in the image - the black level.
+  // For the test image, that's 13556 (hot pixel) - 1022 (cblack[6..]) == 12534.
   real_max = C.data_maximum;
+  printf("real_max %d\n", real_max);
   if (real_max > 0 && real_max < C.maximum && real_max > C.maximum * auto_threshold)
   {
+    printf("hey yes the max is changing! before %d, after %d\n", C.maximum, real_max);
     C.maximum = real_max;
   }
   return LIBRAW_SUCCESS;
@@ -3678,6 +3684,8 @@ int LibRaw::raw2image_ex(int do_subtract_black)
 
     if (do_subtract_black)
     {
+      printf("Subtracting black!\n");
+      printf("Got data_maximum %d and subtracting %d from the maximum %d\n", dmax, C.black, C.maximum);
       C.data_maximum = (int)dmax;
       C.maximum -= C.black;
       //        ZERO(C.cblack);
@@ -4701,23 +4709,31 @@ void LibRaw::convert_to_rgb_loop(float out_cam[3][4])
 
 void LibRaw::scale_colors_loop(float scale_mul[4])
 {
+  printf("in scale_colors_loop\n");
   unsigned size = S.iheight * S.iwidth;
 
   if (C.cblack[4] && C.cblack[5])
   {
+    printf("Doing nasty fuji black sub\n");
     int val;
     for (unsigned i = 0; i < size * 4; i++)
     {
-      if (!(val = imgdata.image[0][i]))
+     if (!(val = imgdata.image[0][i])) {
+        printf("val = %d, skipping\n", val);
         continue;
+     }
+      printf("val was %d\n", val);
       val -= C.cblack[6 + i / 4 / S.iwidth % C.cblack[4] * C.cblack[5] + i / 4 % S.iwidth % C.cblack[5]];
       val -= C.cblack[i & 3];
+      printf("val is %d after black sub\n", val);
       val *= scale_mul[i & 3];
+      printf("val is %d after scaling by %f\n", val, scale_mul[i&3]);
       imgdata.image[0][i] = CLIP(val);
     }
   }
   else if (C.cblack[0] || C.cblack[1] || C.cblack[2] || C.cblack[3])
   {
+    printf("Using per-channel black sub\n");
     for (unsigned i = 0; i < size * 4; i++)
     {
       int val = imgdata.image[0][i];
@@ -4730,10 +4746,12 @@ void LibRaw::scale_colors_loop(float scale_mul[4])
   }
   else // BL is zero
   {
+    printf("BL is zero\n");
     for (unsigned i = 0; i < size * 4; i++)
     {
       int val = imgdata.image[0][i];
       val *= scale_mul[i & 3];
+      //printf("val is %d after scaling by %f\n", val, scale_mul[i&3]);
       imgdata.image[0][i] = CLIP(val);
     }
   }
@@ -4879,15 +4897,21 @@ int LibRaw::dcraw_process(void)
 
     if (!subtract_inline || !C.data_maximum)
     {
+      printf("Subtracting inline or whatever\n");
+      printf("black is %d\n", C.black);
       adjust_bl();
       subtract_black_internal();
     }
 
-    if (!(di.decoder_flags & LIBRAW_DECODER_FIXEDMAXC))
+    if (!(di.decoder_flags & LIBRAW_DECODER_FIXEDMAXC)) {
+      printf("Adjusting max\n");
       adjust_maximum();
+    }
 
-    if (O.user_sat > 0)
+    if (O.user_sat > 0) {
+      printf("Jokes on you, user_sat\n");
       C.maximum = O.user_sat;
+    }
 
     if (P1.is_foveon)
     {
