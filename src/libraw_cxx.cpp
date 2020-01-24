@@ -3465,6 +3465,9 @@ int LibRaw::raw2image_ex(int do_subtract_black)
     printf("raw2image_ex let's go let's go\n");
     raw2image_start();
 
+    // No data yet
+    //dump_128x("raw2image_start", imgdata.image);
+
     // Compressed P1 files with bl data!
     if (is_phaseone_compressed() && imgdata.rawdata.raw_alloc)
     {
@@ -3570,10 +3573,13 @@ int LibRaw::raw2image_ex(int do_subtract_black)
     unsigned short dmax = 0;
     if (do_subtract_black)
     {
+      printf("Ok about to black sub\n");
       adjust_bl();
       for (int i = 0; i < 4; i++)
         cblack[i] = (unsigned short)C.cblack[i];
     }
+
+    dump_128x("post_blacksub", imgdata.image);
 
     // Move saved bitmap to imgdata.image
     if ((imgdata.idata.filters || P1.colors == 1) && imgdata.rawdata.raw_image)
@@ -3582,6 +3588,7 @@ int LibRaw::raw2image_ex(int do_subtract_black)
       {
         if (do_crop)
         {
+          printf("do_crop for fuji\n");
           IO.fuji_width = S.width >> !libraw_internal_data.unpacker_data.fuji_layout;
           int IO_fwidth = (S.height >> libraw_internal_data.unpacker_data.fuji_layout) + IO.fuji_width;
           int IO_fheight = IO_fwidth - 1;
@@ -3671,6 +3678,9 @@ int LibRaw::raw2image_ex(int do_subtract_black)
         throw LIBRAW_EXCEPTION_DECODE_RAW;
       }
     }
+    printf("Not entirely sure what's happening here but let's roll\n");
+    // This is where we first have img data.
+    dump_128x("unsure", imgdata.image);
 
     // Free PhaseOne separate copy allocated at function start
     if (is_phaseone_compressed())
