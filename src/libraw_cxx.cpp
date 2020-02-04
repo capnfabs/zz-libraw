@@ -1012,6 +1012,7 @@ int LibRaw::adjust_maximum()
 
 void LibRaw::merror(void *ptr, const char *where)
 {
+  printf("checkpoint: %s\n", where);
   if (ptr)
     return;
   if (callbacks.mem_cb)
@@ -2767,6 +2768,7 @@ int LibRaw::unpack(void)
     if (rwidth > 65535 || rheight > 65535) // No way to make image larger than 64k pix
       throw LIBRAW_EXCEPTION_IO_CORRUPT;
 
+    // reset pointers
     imgdata.rawdata.raw_image = 0;
     imgdata.rawdata.color4_image = 0;
     imgdata.rawdata.color3_image = 0;
@@ -2790,6 +2792,7 @@ int LibRaw::unpack(void)
 #endif
 
 #ifdef USE_RAWSPEED
+    printf("Secretly using RAWSPEED\n");
     if (!raw_was_read())
     {
       int rawspeed_enabled = 1;
@@ -2920,11 +2923,14 @@ int LibRaw::unpack(void)
           zero_rawimage = 1;
         }
       }
+      // I don't know if this is `ifp` or not from dcraw, but let's print it
+      printf("Offset pointer pre load %lld\n", libraw_internal_data.unpacker_data.data_offset);
       ID.input->seek(libraw_internal_data.unpacker_data.data_offset, SEEK_SET);
 
       unsigned m_save = C.maximum;
       if (load_raw == &LibRaw::unpacked_load_raw && !strcasecmp(imgdata.idata.make, "Nikon"))
         C.maximum = 65535;
+      // HERE is where it's called. Goodness.
       (this->*load_raw)();
       if (zero_rawimage)
         imgdata.rawdata.raw_image = 0;
@@ -2942,6 +2948,7 @@ int LibRaw::unpack(void)
 	  }
 	  else if (!(imgdata.idata.filters || P1.colors == 1)) // legacy decoder, ownalloc handled above
       {
+        printf("Legacy decoder something something");
         // successfully decoded legacy image, attach image to raw_alloc
         imgdata.rawdata.raw_alloc = imgdata.image;
         imgdata.rawdata.color4_image = (ushort(*)[4])imgdata.rawdata.raw_alloc;
@@ -2959,7 +2966,7 @@ int LibRaw::unpack(void)
         }
       }
     }
-
+    printf("2065: do we have a raw image yet? %d\n", (imgdata.rawdata.raw_image != 0));
     if (imgdata.rawdata.raw_image)
       crop_masked_pixels(); // calculate black levels
 

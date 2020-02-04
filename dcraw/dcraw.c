@@ -2802,13 +2802,21 @@ void CLASS leaf_hdr_load_raw()
   }
 }
 
+// Reads in all the 16-bit numbers from the current position
 void CLASS unpacked_load_raw()
 {
+  printf("Offset pointer now is %lld\n", ftell(ifp));
   int row, col, bits = 0;
+  // Does something like set 'bits' such that 2^(bits - 1) is < maximum, but 2^bits is >= maximum
+  // i.e. the min number of bits required to support the given maximum
   while (1 << ++bits < maximum)
     ;
   read_shorts(raw_image, raw_width * raw_height);
+
+  // backtrack two bytes
   fseek(ifp,-2,SEEK_CUR); // avoid EOF error
+  // this applies to me; we're 14-bit < 0xffff
+  // But it's just error-checking I think
   if (maximum < 0xffff || load_flags)
     for (row = 0; row < raw_height; row++)
     {
@@ -2933,6 +2941,7 @@ void CLASS imacon_full_load_raw()
 
 void CLASS packed_load_raw()
 {
+  printf("LOAD_RAW: PACKED\n");
   int vbits = 0, bwide, rbits, bite, half, irow, row, col, val, i;
   UINT64 bitbuf = 0;
 
@@ -8165,6 +8174,9 @@ void CLASS recover_highlights()
 }
 #undef SCALE
 
+// Grabs the TAG, TYPE, and length (number of elements) from the TIFF.
+// The file pointer ifp is set such that the next read will read the value of the tag.
+// save is set to the next entry in the IFD.
 void CLASS tiff_get(unsigned base, unsigned *tag, unsigned *type, unsigned *len, unsigned *save)
 {
 #ifdef LIBRAW_IOSPACE_CHECK
@@ -8177,6 +8189,8 @@ void CLASS tiff_get(unsigned base, unsigned *tag, unsigned *type, unsigned *len,
   *type = get2();
   *len = get4();
   *save = ftell(ifp) + 4;
+  // This encodes the length for all the different TIFF tag types. Goes up to
+  // 13 if the 'type' is greater than zero, magically seek to the right place.
   if (*len * ("11124811248484"[*type < 14 ? *type : 0] - '0') > 4)
     fseek(ifp, get4() + base, SEEK_SET);
 }
@@ -12711,6 +12725,7 @@ void CLASS parse_makernote(int base, int uptag)
     if (tag == 0x11 && is_raw && !strncmp(make, "NIKON", 5))
     {
       fseek(ifp, get4() + base, SEEK_SET);
+      printf("About to ifd parse, Nikon\n");
       parse_tiff_ifd(base);
     }
     if (tag == 0x14 && type == 7)
@@ -13997,6 +14012,7 @@ void CLASS parse_minolta(int base);
 int CLASS parse_tiff(int base);
 
 //@out COMMON
+// TODO: where does parse_tiff_ifd called? What is base?
 int CLASS parse_tiff_ifd(int base)
 {
   unsigned entries, tag, type, len, plen = 16, save;
@@ -14013,26 +14029,35 @@ int CLASS parse_tiff_ifd(int base)
   FILE *sfp;
 #endif
 
-  if (tiff_nifds >= sizeof tiff_ifd / sizeof tiff_ifd[0])
+  if (tiff_nifds >= sizeof tiff_ifd / sizeof tiff_ifd[0]) {
+    printf("Returning 1, not sure why\n");
     return 1;
+  }
   ifd = tiff_nifds++;
+  printf("This is IFD %d\n", ifd);
   for (j = 0; j < 4; j++)
     for (i = 0; i < 4; i++)
       cc[j][i] = i == j;
   entries = get2();
-  if (entries > 512)
+  if (entries > 512) {
+    printf("Returning 1, too many entries\n");
     return 1;
+  }
+  printf("Got %d TIFF entries\n", entries);
 #ifdef LIBRAW_LIBRARY_BUILD
   INT64 fsize = ifp->size();
 #endif
   while (entries--)
   {
     tiff_get(base, &tag, &type, &len, &save);
+    // save is maybe the offset?
+    printf("Got TIFF %X / %d, %d, %d, %d\n", tag, tag, type, len, save);
 #ifdef LIBRAW_LIBRARY_BUILD
     INT64 savepos = ftell(ifp);
     if (len > 8 && savepos + len > 2 * fsize)
     {
       fseek(ifp, save, SEEK_SET); // Recover tiff-read position!!
+      printf("Continuing for some reason?\n");
       continue;
     }
     if (callbacks.exif_cb)
@@ -14229,6 +14254,7 @@ int CLASS parse_tiff_ifd(int base)
         order = get2();
         fseek(ifp, 2, SEEK_CUR);
         fseek(ifp, get4()-8, SEEK_CUR);
+        printf("About to ifd parse, pana_raw\n");
         parse_tiff_ifd (base);
         base = sbase;
         order = sorder;
@@ -14318,9 +14344,15 @@ int CLASS parse_tiff_ifd(int base)
       thumb_offset = ftell(ifp) - 2;
       thumb_length = len;
       break;
+      //HERE
     case 61440: /* Fuji HS10 table */
+      // Ok, so FUJI have hacked this in, and so has libraw, but I guess the
+      // problem was that the size / type wasn't clear beforehand.
+      // This means the value in that field is an offset from the tiff start.
       fseek(ifp, get4() + base, SEEK_SET);
+      printf("About to ifd parse, HS10\n");
       parse_tiff_ifd(base);
+      printf("Finished HS10 parse\n");
       break;
     case 2:
     case 256:
@@ -14387,11 +14419,14 @@ int CLASS parse_tiff_ifd(int base)
     case 513: /* JpegIFOffset */
     case 61447:
       tiff_ifd[ifd].offset = get4() + base;
+      printf("Just got offset %lld from tag %d\n", tiff_ifd[ifd].offset, tag);
       if (!tiff_ifd[ifd].bps && tiff_ifd[ifd].offset > 0)
       {
+        printf("Something about BPS and offset\n");
         fseek(ifp, tiff_ifd[ifd].offset, SEEK_SET);
         if (ljpeg_start(&jh, 1))
         {
+          printf("It's a JPEG\n");
           tiff_ifd[ifd].comp = 6;
           tiff_ifd[ifd].t_width = jh.wide;
           tiff_ifd[ifd].t_height = jh.high;
@@ -14405,7 +14440,9 @@ int CLASS parse_tiff_ifd(int base)
             tiff_ifd[ifd].t_height *= 2;
           }
           i = order;
+          printf("Parse tiff because of JPEG? offset %d\n", tiff_ifd[ifd].offset);
           parse_tiff(tiff_ifd[ifd].offset + 12);
+          printf("Parse tiff because of JPEG? Done\n");
           order = i;
         }
       }
@@ -14431,9 +14468,11 @@ int CLASS parse_tiff_ifd(int base)
 #endif
     case 514:
     case 61448:
+      // NOTE(fabian): I have no idea what this is. Something to do with JPEG for 514.
       tiff_ifd[ifd].bytes = get4();
       break;
     case 61454: // FujiFilm "As Shot"
+      // EY IT'S THE WHITE BALANCE, 3 x u32
       FORC3 cam_mul[(4 - c) % 3] = getint(type);
       break;
     case 305:
@@ -14466,6 +14505,7 @@ int CLASS parse_tiff_ifd(int base)
       tiff_ifd[ifd].t_tile_length = getint(type);
       break;
     case 324: /* TileOffsets */
+      printf("Just got offset %lld from tag %d\n", tiff_ifd[ifd].offset, tag);
       tiff_ifd[ifd].offset = len > 1 ? ftell(ifp) : get4();
       if (len == 1)
         tiff_ifd[ifd].t_tile_width = tiff_ifd[ifd].t_tile_length = 0;
@@ -14495,6 +14535,7 @@ int CLASS parse_tiff_ifd(int base)
       {
         fseek(ifp, ftell(ifp) + 4, SEEK_SET);
         fseek(ifp, get4() + base, SEEK_SET);
+        printf("Hasselblad Rd ii\n");
         parse_tiff_ifd(base);
         break;
       }
@@ -14505,6 +14546,7 @@ int CLASS parse_tiff_ifd(int base)
       {
         i = ftell(ifp);
         fseek(ifp, get4() + base, SEEK_SET);
+        printf("About to ifd parse, subifds or something idk\n");
         if (parse_tiff_ifd(base))
           break;
         fseek(ifp, i + 4, SEEK_SET);
@@ -14851,6 +14893,7 @@ int CLASS parse_tiff_ifd(int base)
       c = tiff_nifds;
       order = get2();
       fseek(ifp, j + (get2(), get4()), SEEK_SET);
+      printf("About to ifd parse, hasselblad\n");
       parse_tiff_ifd(j);
       maximum = 0xffff;
       tiff_nifds = c;
@@ -14937,6 +14980,7 @@ int CLASS parse_tiff_ifd(int base)
       }
       break;
     case 0xf00c:
+      // Not any of these models
       if (strcmp(model, "X-A3")  &&
           strcmp(model, "X-A10") &&
           strcmp(model, "X-A5")  &&
@@ -14954,6 +14998,9 @@ int CLASS parse_tiff_ifd(int base)
           {
             INT64 f_save = ftell(ifp);
             ushort *rafdata = (ushort *)malloc(sizeof(ushort) * libraw_internal_data.unpacker_data.lenRAFData);
+            // This is the C00C tag
+            // lenRAFData is length in u16s
+            // The White balance is in here somewhere.
             fseek(ifp, libraw_internal_data.unpacker_data.posRAFData, SEEK_SET);
             fread(rafdata, sizeof(ushort), libraw_internal_data.unpacker_data.lenRAFData, ifp);
             fseek(ifp, f_save, SEEK_SET);
@@ -15014,6 +15061,8 @@ int CLASS parse_tiff_ifd(int base)
 #endif
 
     case 61450:
+      // This is supposed to be 36 u32s; I'm confused as to why
+      // this silly thing is happening... the offset points to the black level?
       cblack[4] = cblack[5] = MIN(sqrt((double)len), 64);
     case 50714: /* BlackLevel */
 #ifdef LIBRAW_LIBRARY_BUILD
@@ -15441,6 +15490,7 @@ int CLASS parse_tiff_ifd(int base)
         break;
       parse_minolta(j = get4() + base);
       fseek(ifp, j, SEEK_SET);
+      printf("About to ifd parse, minolta\n");
       parse_tiff_ifd(base);
       break;
     case 50752:
@@ -15496,6 +15546,7 @@ int CLASS parse_tiff_ifd(int base)
     {
       fwrite(buf, sony_length, 1, ifp);
       fseek(ifp, 0, SEEK_SET);
+      printf("About to ifd parse, sony\n");
       parse_tiff_ifd(-sony_offset);
       fclose(ifp);
     }
@@ -15503,6 +15554,7 @@ int CLASS parse_tiff_ifd(int base)
 #else
     if (!ifp->tempbuffer_open(buf, sony_length))
     {
+      printf("About to ifd parse, sony\n");
       parse_tiff_ifd(-sony_offset);
       ifp->tempbuffer_close();
     }
@@ -15534,14 +15586,21 @@ int CLASS parse_tiff(int base)
   int doff;
   fseek(ifp, base, SEEK_SET);
   order = get2();
+  // Test for byte order
   if (order != 0x4949 && order != 0x4d4d)
     return 0;
+  // this is supposed to be 42 but y'know
   get2();
   while ((doff = get4()))
   {
+    printf("Read offset %d, base is %d\n", doff, base);
     fseek(ifp, doff + base, SEEK_SET);
-    if (parse_tiff_ifd(base))
+    printf("About to ifd parse, parse_tiff\n");
+    if (parse_tiff_ifd(base)) {
+      printf("Done ifd parse, parse_tiff, exiting\n");
       break;
+    }
+    printf("Done ifd parse, parse_tiff, continuing\n");
   }
   return 1;
 }
@@ -15596,7 +15655,10 @@ void CLASS apply_tiff()
       raw_height = tiff_ifd[i].t_height;
       tiff_bps = tiff_ifd[i].bps;
       tiff_compress = tiff_ifd[i].comp;
+      printf("15652 data_offset\n");
       data_offset = tiff_ifd[i].offset;
+      printf("This offset is %lld\n", data_offset);
+      printf("And the IFD idx is %d\n", i);
 #ifdef LIBRAW_LIBRARY_BUILD
       data_size = tiff_ifd[i].bytes;
 #endif
@@ -15954,7 +16016,9 @@ void CLASS parse_minolta(int base)
       FORC4 cam_mul[c ^ (c >> 1) ^ i] = get2();
       break;
     case 0x545457: /* TTW */
+      printf("Parsing TIFF TTW\n");
       parse_tiff(ftell(ifp));
+      printf("Done Parsing TIFF TTW\n");
       data_offset = offset;
     }
     fseek(ifp, save + len + 8, SEEK_SET);
@@ -16047,7 +16111,9 @@ void CLASS parse_external_jpeg()
       if (verbose)
         fprintf(stderr, _("Reading metadata from %s ...\n"), jname);
 #endif
+      printf("Parsing TIFF at 12, not sure why\n");
       parse_tiff(12);
+      printf("Done Parsing TIFF at 12, not sure why\n");
       thumb_offset = 0;
       is_raw = 1;
       fclose(ifp);
@@ -16058,7 +16124,9 @@ void CLASS parse_external_jpeg()
   {
     if (!ifp->subfile_open(jname))
     {
+      printf("Parsing TIFF at 12, subfile, not sure why\n");
       parse_tiff(12);
+      printf("Done Parsing TIFF at 12, subfile, not sure why\n");
       thumb_offset = 0;
       is_raw = 1;
       ifp->subfile_close();
@@ -16555,6 +16623,7 @@ void CLASS parse_phase_one(int base)
       ph1.format = data;
       break;
     case 0x10f:
+      printf("16618 data_offset eyyyyyyyyyy\n");
       data_offset = data + base;
       break;
     case 0x110:
@@ -16670,11 +16739,16 @@ void CLASS parse_fuji(int offset)
 
   fseek(ifp, offset, SEEK_SET);
   entries = get4();
-  if (entries > 255)
+  // This is 11, the thing I figured out myself
+  printf("We've got %d fuji entries\n", entries);
+  if (entries > 255) {
+    printf("It's too big!\n");
     return;
+  }
 #ifdef LIBRAW_LIBRARY_BUILD
   imgdata.process_warnings |= LIBRAW_WARN_PARSEFUJI_PROCESSED;
 #endif
+  // Loop through the entries
   while (entries--)
   {
     tag = get2();
@@ -16711,7 +16785,6 @@ void CLASS parse_fuji(int offset)
       FORC4 cam_mul[c ^ 1] = get2();
 
 // IB start
-#ifdef LIBRAW_LIBRARY_BUILD
     }
 
     else if (tag == 0x110)
@@ -16788,7 +16861,6 @@ void CLASS parse_fuji(int offset)
     else if (tag == 0x2410)
     {
       FORC4 imgdata.color.WB_Coeffs[LIBRAW_WBI_Flash][c ^ 1] = get2();
-#endif
       // IB end
     }
     else if (tag == 0xc000)
@@ -16814,20 +16886,24 @@ void CLASS parse_fuji(int offset)
     X-Pro2	0x0255
     */
     {
+      // OHHHH that's why I couldn't read this, it changes per device.
       c = order;
       order = 0x4949;
-      if ((tag = get4()) > 10000)
+      tag = get4();
+      // this it intentionally duplicated. It's trying to skip WRTS and similar
+      // but doesn't actually know what WRTS is.
+      if (tag > 10000)
         tag = get4();
       if (tag > 10000)
         tag = get4();
       width = tag;
       height = get4();
-#ifdef LIBRAW_LIBRARY_BUILD
       if (!strcmp(model, "X-A3")  ||
           !strcmp(model, "X-A10") ||
           !strcmp(model, "X-A5")  ||
           !strcmp(model, "X-A20"))
       {
+        // Is it one of those models?
         int wb[4];
         int nWB, tWB, pWB;
         int iCCT = 0;
@@ -16862,12 +16938,11 @@ void CLASS parse_fuji(int offset)
           }
         }
       }
-      else
+      else // all other models
       {
         libraw_internal_data.unpacker_data.posRAFData = save;
         libraw_internal_data.unpacker_data.lenRAFData = (len >> 1);
       }
-#endif
       order = c;
     }
     fseek(ifp, save + len, SEEK_SET);
@@ -16908,8 +16983,10 @@ int CLASS parse_jpeg(int offset)
 #endif
       parse_ciff(save + hlen, len - hlen, 0);
     }
+    printf("Parsing TIFF pre_apply, not sure why\n");
     if (parse_tiff(save + 6))
       apply_tiff();
+    printf("Done Parsing TIFF pre_apply, not sure why\n");
     fseek(ifp, save + len, SEEK_SET);
   }
   return 1;
@@ -19396,6 +19473,7 @@ void CLASS identify()
   if ((cp = (char *)memmem(head, 32, (char *)"MMMM", 4)) || (cp = (char *)memmem(head, 32, (char *)"IIII", 4)))
   {
     parse_phase_one(cp - head);
+    printf("Parsing TIFF phaseone, not sure why\n");
     if (cp - head && parse_tiff(0))
       apply_tiff();
   }
@@ -19403,6 +19481,7 @@ void CLASS identify()
   {
     if (!memcmp(head + 6, "HEAPCCDR", 8))
     {
+      printf("19476 data_offset\n");
       data_offset = hlen;
 #ifdef LIBRAW_LIBRARY_BUILD
       imgdata.lens.makernotes.CameraMount = LIBRAW_MOUNT_FixedLens;
@@ -19412,15 +19491,19 @@ void CLASS identify()
       load_raw = &CLASS canon_load_raw;
     }
     else if (parse_tiff(0))
+      printf("Just parsed tff, could only put in awkward spot, not sure why??????\n");
       apply_tiff();
   }
   else if (!memcmp(head, "\xff\xd8\xff\xe1", 4) && !memcmp(head + 6, "Exif", 4))
   {
     fseek(ifp, 4, SEEK_SET);
+    printf("19492 data_offset\n");
     data_offset = 4 + get2();
     fseek(ifp, data_offset, SEEK_SET);
-    if (fgetc(ifp) != 0xff)
+    if (fgetc(ifp) != 0xff) {
+      printf("Parsing TIFF at 12, not sure why, 19483\n");
       parse_tiff(12);
+    }
     thumb_offset = 0;
   }
   else if (!memcmp(head + 25, "ARECOYK", 7))
@@ -19513,22 +19596,42 @@ void CLASS identify()
     memcpy(model2, head + 0x3c, 4);
     model2[4] = 0;
 #endif
+    // Seek to 84
     fseek(ifp, 84, SEEK_SET);
+
+    // JPEG details
     thumb_offset = get4();
     thumb_length = get4();
+    // Offset of the Fuji meta
     fseek(ifp, 92, SEEK_SET);
-    parse_fuji(get4());
+    // Parse the Fuji meta
+    unsigned int fuji_offset = get4();
+    printf("Fuji offset is %d\n", fuji_offset);
+    parse_fuji(fuji_offset);
+    // This is extremely WTF and doesn't apply to my RAF files
     if (thumb_offset > 120)
     {
       fseek(ifp, 120, SEEK_SET);
-      is_raw += (i = get4()) ? 1 : 0;
+      i = get4();
+      is_raw += i ? 1 : 0;
       if (is_raw == 2 && shot_select)
         parse_fuji(i);
     }
+    //
     load_raw = &CLASS unpacked_load_raw;
-    fseek(ifp, 100 + 28 * (shot_select > 0), SEEK_SET);
-    parse_tiff(data_offset = get4());
+    // Assume shot_select == 0
+    // This seeks to the position of the *actual* TIFF photo
+    fseek(ifp, 100, SEEK_SET);
+    printf("19617 data_offset... are we just _guessing_ this?\n");
+    // This is the TIFF file... can't be right
+    data_offset = get4();
+    printf("Parse tiff 19606\n");
+    parse_tiff(data_offset);
+    printf("Done Parse tiff 19606\n");
+    // This is the thumbnail Exif, and Exif is secretly just TIFF once you drop the header.
+    printf("Parse tiff 19610\n");
     parse_tiff(thumb_offset + 12);
+    printf("Done Parse tiff 19610\n");
     apply_tiff();
   }
   else if (!memcmp(head, "RIFF", 4))
@@ -19659,6 +19762,7 @@ void CLASS identify()
         zero_is_bad = table[i].flags & 2;
         if (table[i].flags & 1)
           parse_external_jpeg();
+        printf("19757 data_offset i hope not\n");
         data_offset = table[i].offset == 0xffff ? 0 : table[i].offset;
         raw_width = table[i].rw;
         raw_height = table[i].rh;
@@ -22481,6 +22585,8 @@ int CLASS main(int argc, const char **argv)
     if (raw_image && read_from_stdin)
       fread(raw_image, 2, raw_height * raw_width, stdin);
     else
+      // HERE'S THE ACTUAL INVOCATION
+      // OHHHH but it's not used by libraw??
       (*load_raw)();
     if (document_mode == 3)
     {
