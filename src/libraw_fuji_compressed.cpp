@@ -259,30 +259,40 @@ void LibRaw::copy_line_to_xtrans(struct fuji_compressed_block *info, int cur_lin
   ushort *lineBufB[3];
   ushort *lineBufG[6];
   ushort *lineBufR[3];
-  unsigned pixel_count;
   ushort *line_buf;
   int index;
 
+  // cur_block_width * cur_block + (6 * raw_width * cur_line)
+  // cur_block_width = width of vertical stripe == 768
+  // cur_block = [0..8)
+  // cur_line = [0..673], but a "line" here is 6 pixel lines
   int offset = libraw_internal_data.unpacker_data.fuji_block_width * cur_block + 6 * imgdata.sizes.raw_width * cur_line;
-  ushort *raw_block_data = imgdata.rawdata.raw_image + offset;
+  ushort *raw_block_data_start = imgdata.rawdata.raw_image + offset;
   int row_count = 0;
 
   for (int i = 0; i < 3; i++)
   {
+    // uhhhhhhhhh this is awful. Ok:
+    // lineBufR[0]  == linebuf[_R2], but starts from the first actual value, not the slop value.
+    // lineBufR[1]  == linebuf[_R3], but starts from the first actual value, not the slop value.
+    // lineBufR[2]  == linebuf[_R4], but starts from the first actual value, not the slop value.
     lineBufR[i] = info->linebuf[_R2 + i] + 1;
     lineBufB[i] = info->linebuf[_B2 + i] + 1;
   }
-  for (int i = 0; i < 6; i++)
+  // same as above, but there's more green.
+  for (int i = 0; i < 6; i++) {
     lineBufG[i] = info->linebuf[_G2 + i] + 1;
+  }
 
-  while (row_count < 6)
-  {
-    pixel_count = 0;
-    while (pixel_count < cur_block_width)
-    {
+  // TODO: figure out row_count is used
+  for (unsigned row_count = 0; row_count < 6; row_count++) {
+    ushort *raw_block_data = raw_block_data_start + imgdata.sizes.raw_width * row_count;
+    for (unsigned pixel_count = 0; pixel_count < cur_block_width; pixel_count++) {
       switch (imgdata.idata.xtrans_abs[row_count][(pixel_count % 6)])
       {
       case 0: // red
+        // Oh, this is >> 1 because there's only 3 lines for R & B but there's 6
+        // for G
         line_buf = lineBufR[row_count >> 1];
         break;
       case 1:  // green
@@ -294,13 +304,13 @@ void LibRaw::copy_line_to_xtrans(struct fuji_compressed_block *info, int cur_lin
         break;
       }
 
+      //0x7F..FE is 32-bit 0b01....10
+      // pixel_count * 2 / 3 produces 0,0,1,1,2,2,3,3
       index = (((pixel_count * 2 / 3) & 0x7FFFFFFE) | ((pixel_count % 3) & 1)) + ((pixel_count % 3) >> 1);
+      //auto color = imgdata.idata.xtrans_abs[row_count][(pixel_count % 6)];
+      //printf("color %d, index %d\n", color, index);
       raw_block_data[pixel_count] = line_buf[index];
-
-      ++pixel_count;
     }
-    ++row_count;
-    raw_block_data += imgdata.sizes.raw_width;
   }
 }
 
@@ -676,7 +686,7 @@ static inline int fuji_decode_sample_odd(struct fuji_compressed_block *info,
 // Rf = line_buf[pos - 4 - 2*line_width]
 // line_width = 512??!???!??!?!?!?!?
 // but the row is 768... don't know why the row is off.
-// Ok also -- probably good to know what's going on with the blocks. Like, are these all red? green? blue?
+// There is no "decode_interpolation_odd".
 static void fuji_decode_interpolation_even(int line_width, ushort *line_buf, int pos)
 {
   ushort *line_buf_cur = line_buf + pos;
