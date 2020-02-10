@@ -18,3 +18,4 @@ Just run `dcraw_emu` without flags, but for reference:
 -v -v -v -- verbose verbose verbose
 -q 2 -- use 1-pass Frank's xtrans algorithm
 -q 0 -- use bilinear interpolation (much faster)
+-disinterp -- disable interpolation

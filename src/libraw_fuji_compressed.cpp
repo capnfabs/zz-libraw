@@ -81,6 +81,9 @@ static unsigned sgetn(int n, uchar *s)
   return result;
 }
 
+int DUMP = 0;
+int BLOCK = 0;
+
 // weird: this doesn't do any reads.
 void LibRaw::init_fuji_compr(struct fuji_compressed_params *info)
 {
@@ -102,9 +105,9 @@ void LibRaw::init_fuji_compr(struct fuji_compressed_params *info)
     info->line_width = libraw_internal_data.unpacker_data.fuji_block_width >> 1;
 
   info->q_point[0] = 0;
-  info->q_point[1] = 0x12;  //    0b 00010010
-  info->q_point[2] = 0x43;  // == 0b 01000011
-  info->q_point[3] = 0x114; // == 0b100010100
+  info->q_point[1] = 0x12;  //    0b 00010010 = 18
+  info->q_point[2] = 0x43;  // == 0b 01000011 = 67
+  info->q_point[3] = 0x114; // == 0b100010100 = 276
   // This is 2^14-1 for 14-bit numbers = 16383
   info->q_point[4] = (1 << libraw_internal_data.unpacker_data.fuji_bits) - 1;
   // 64 = 2^6
@@ -254,6 +257,14 @@ void LibRaw::init_fuji_block(struct fuji_compressed_block *info, const struct fu
   fuji_fill_buffer(info);
 }
 
+void dumparray(char* label, unsigned short* array, unsigned length) {
+  printf("%s: [", label);
+  for (int i = 0; i < length - 1; i++) {
+    printf("%u, ", array[i]);
+  }
+  printf("%u]\n", array[length-1]);
+}
+
 void LibRaw::copy_line_to_xtrans(struct fuji_compressed_block *info, int cur_line, int cur_block, int cur_block_width)
 {
   ushort *lineBufB[3];
@@ -284,6 +295,22 @@ void LibRaw::copy_line_to_xtrans(struct fuji_compressed_block *info, int cur_lin
     lineBufG[i] = info->linebuf[_G2 + i] + 1;
   }
 
+  char label[50];
+  if (cur_block == 0 && cur_line < 3) {
+    for (int i = 0; i < 3; i++) {
+      sprintf(label, "R%d", i+2);
+      dumparray(label, lineBufR[i], 512);
+    }
+    for (int i = 0; i < 6; i++) {
+      sprintf(label, "G%d", i+2);
+      dumparray(label, lineBufG[i], 512);
+    }
+    for (int i = 0; i < 3; i++) {
+      sprintf(label, "B%d", i+2);
+      dumparray(label, lineBufB[i], 512);
+    }
+  }
+
   // TODO: figure out row_count is used
   for (unsigned row_count = 0; row_count < 6; row_count++) {
     ushort *raw_block_data = raw_block_data_start + imgdata.sizes.raw_width * row_count;
@@ -307,10 +334,16 @@ void LibRaw::copy_line_to_xtrans(struct fuji_compressed_block *info, int cur_lin
       //0x7F..FE is 32-bit 0b01....10
       // pixel_count * 2 / 3 produces 0,0,1,1,2,2,3,3
       index = (((pixel_count * 2 / 3) & 0x7FFFFFFE) | ((pixel_count % 3) & 1)) + ((pixel_count % 3) >> 1);
-      //auto color = imgdata.idata.xtrans_abs[row_count][(pixel_count % 6)];
-      //printf("color %d, index %d\n", color, index);
-      raw_block_data[pixel_count] = line_buf[index];
+      auto color = imgdata.idata.xtrans_abs[row_count][(pixel_count % 6)];
+      if (cur_block == 0) {
+        //printf("color %d index %03d\n", color, index);
+        raw_block_data[pixel_count] = line_buf[index];
+      } else {
+        raw_block_data[pixel_count] = 1022;
+      }
     }
+    // exit early
+    //assert(row_count < 1);
   }
 }
 
@@ -447,12 +480,13 @@ static inline void fuji_read_code(struct fuji_compressed_block *info, int *data,
 }
 
 // returns B such that (value2 << (B-1)) < value1 <= (value2 << B)
+// I suspect that this might be one bigger than need be to make room for the
+// sign bit in `code`
 static inline int bitDiff(int value1, int value2)
 {
   if (value2 < value1) {
     int decBits = 1;
-    while (decBits <= 12 && (value2 << decBits) < value1){
-      // do nothing
+    while (decBits <= 12 && (value2 << decBits) < value1) {
       decBits++;
     }
     return decBits;
@@ -461,7 +495,35 @@ static inline int bitDiff(int value1, int value2)
   }
 }
 
-// grads: the gradients for the given color. There's 41 of them.
+
+const char *c4(ushort *current, ushort **set) {
+  if (current >= set[_B2]) {
+    return "B";
+  }
+  if (current >= set[_G2]) {
+    return "G";
+  }
+  if (current >= set[_R2]) {
+    return "R";
+  }
+  return "?";
+}
+
+long row(ushort *current, ushort **set, long lw) {
+  _xt_lines spot = _ltotal;
+  if (current >= set[_B2]) {
+    spot = _B2;
+  } else if (current >= set[_G2]) {
+    spot = _G2;
+  } else if (current >= set[_R2]) {
+    spot = _R2;
+  } else {
+    return -1;
+  }
+  return (current - set[spot]) / lw;
+}
+
+// grads: the gradients??
 static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
                                           const struct fuji_compressed_params *params, ushort *line_buf, int pos,
                                           struct int_pair *grads)
@@ -475,14 +537,13 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   // "Two lines previous" is _G0
   int sample = 0, code = 0;
   ushort *line_buf_cur = line_buf + pos;
-  // from the previous line, <- 2
+  // from the previous line, directly above
   int Rb = line_buf_cur[-2 - params->line_width];
-  // previous line, <- 3
+  // previous line, one to the left
   int Rc = line_buf_cur[-3 - params->line_width];
-  // previous line, <- 1
+  // previous line, one to the right
   int Rd = line_buf_cur[-1 - params->line_width];
-  // two lines ago, <- 4
-  // Ok, so this _does_ only work because everything is allocated contiguously.
+  // two lines ago, immediately above
   int Rf = line_buf_cur[-4 - 2 * params->line_width];
   //printf("line_buf_cur %p\n", line_buf_cur);
 
@@ -493,7 +554,9 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   // set up such that idx 0 represents val -16383, idx qp4 is the 0 point etc.
   // So, as long as Rb, Rc, Rf <= 16383, we'll be fine.
   // These values range between -4 and +4, so grad is between [-40, 40].
-  // I don't know _why_ *9 but let's roll with it.
+  // It's 9* here because there are 9 possibilities in the table,
+  // So this gives even coverage across all 81 possibilities.
+  // These are strictly discrete though; like there's no overlap. If you swap Rc-Rb and Rb-Rf, it doesn't matter.
   grad = (9 * params->q_table[qp4 + (Rb - Rf)] + params->q_table[qp4 + (Rc - Rb)]);
   gradient = _abs(grad);
   // subtract + abs C,F,D from Rb
@@ -511,6 +574,11 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   else
     interp_val = Rd + Rc + 2 * Rb;
 
+  auto weighted = interp_val / 4;
+  /*if (weighted == 3423) {
+    printf("Rb: %d, Rc: %d, Rd: %d, Rf: %d\n", Rb, Rc, Rd, Rf);
+  }*/
+
   // Skip to after the next 0 bits, return the number of 1s skipped over.
   fuji_zerobits(info, &sample);
 
@@ -519,43 +587,54 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   // This seems extremely weird that this number would be so high.
   // 41 consecutive ones would be represented FFFFFFFFFF[extra stuff]...
   // I wonder if it's used as a padding mechanism?
+  int read_code;
   if (sample < params->max_bits - params->raw_bits - 1)
   {
-    if (sample > 14) {
-      // This happens somewhat regularly, but not crazy regularly.
-      // printf("Got an extremely large val for sample: %d\n", sample);
-    }
     // initially, this will be 8 bits, but it grows as value1 changes.
     int decBits = bitDiff(grads[gradient].value1, grads[gradient].value2);
-    if (decBits >= 8) {
-      //printf("large decBits %d\n", decBits);
-    }
     fuji_read_code(info, &code, decBits);
+    read_code = code;
     // Add the number of 1s shifted by decBits.
     // So 'code' is now [num bits]code
     // VERIFIED: You could use |= here and it would work just as well!
     code += sample << decBits;
+    if (DUMP) {
+      printf("dec bits %d, upper %u, lower %u\n", decBits, sample, read_code);
+    }
   }
   else
   {
     //printf("Got an extremely large val for sample: %d\n", sample);
     fuji_read_code(info, &code, params->raw_bits);
+    read_code = code;
+    // does this trigger the "code & 1" pattern below?
     code++;
+    if (DUMP) {
+      printf("dec bits encode direct\n");
+    }
   }
 
   // if code < 0 or >= 2^14, it doesn't make sense; because we're supposed to
   // have 14-bit output integers
   if (code < 0 || code >= params->total_values) {
-    assert(false);
+    printf("ERROR! Got code %d!!\n", code);
+    //assert(false);
     errcnt++;
   }
 
-  // the idea here is -- odd values to one side, even values to the other.
+  // ok this is kinda hard to explain, but this feels like 'store if you want to
+  // add or subtract in the last bit'
+  // Note that the value of 'grad' also affects this, so this is probably a
+  // correction for what 'grad' does.
+  // This makes me think that you can compute 'grad' from the uncompressed data.
+  // The fact that grad calculation relies upon the previous data makes me think
+  // this is possible, too.
   if (code & 1) {
     // if it's odd
     // halve it, add one, make it negative
-    // code = -(code / 2 + 1);
     code = -1 - code / 2;
+    //code = - ((code >> 1) + 1);
+    //code = -1 + bit_flip(code >> 1) + 1
   }
   else {
     code /= 2;
@@ -565,6 +644,8 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   // Each gradient starts off as a pair of (256, 1) (for 14-bit)
   // += abs(code)
   // This increases much faster than value2.
+  auto old_grad = grads[gradient];
+
   grads[gradient].value1 += _abs(code);
   // If grads[gradient].value2 == 64 / 0x40
   if (grads[gradient].value2 == params->min_value)
@@ -576,11 +657,15 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   // Add 1.
   grads[gradient].value2++;
   // grads[gradient].value2 counts from 1 -->  64 and then from 33 -> 64 repeatedly
+  // the >> 2 here is a div by 4 because we're taking the average of the 3 values around it, with the one on the line above counting double.
   if (grad < 0) {
     interp_val = (interp_val >> 2) - code;
   } else {
     interp_val = (interp_val >> 2) + code;
   }
+  // 'code' is effectively the actual value - the weighted value at this point.
+
+  //printf("Gradient %p / %d is now %d/%d\n", grads + gradient, gradient, grads[gradient].value1, grads[gradient].value2);
   // if we blew out the ends, fix it, by masking off the last bits.
   // This only works because we know total_values has exactly 1 bit set.
   // This code replaces the entire commented section below lol
@@ -602,10 +687,20 @@ static inline int fuji_decode_sample_even(struct fuji_compressed_block *info,
   } */
   line_buf_cur[0] = interp_val;
 
+
+  auto rowow = row(line_buf, info->linebuf, params->line_width + 2);
+
+  // HERE
+  if (DUMP) {
+    printf("%s%ld[%d]: weighted: %u, actual: %u, grad_idx: %d, upper: %d, lower %d, code %d, grad_before: Grad(%d, %d), grad_after: Grad(%d, %d)\n",
+      c4(line_buf, info->linebuf), rowow, pos, weighted, interp_val, grad, sample, code, read_code, old_grad.value1, old_grad.value2, grads[gradient].value1, grads[gradient].value2);
+  }
+
   assert(errcnt == 0);
   return errcnt;
 }
 
+// the only bit that's different here is the coefficients that we choose.
 static inline int fuji_decode_sample_odd(struct fuji_compressed_block *info,
                                          const struct fuji_compressed_params *params, ushort *line_buf, int pos,
                                          struct int_pair *grads)
@@ -623,17 +718,23 @@ static inline int fuji_decode_sample_odd(struct fuji_compressed_block *info,
 
   int grad, gradient;
 
+  // swapping these two values around breaks the 'even' code later, because
+  // the sign of this number, which mostly comes from Rb-Rc, affects the
+  // computation later in this method.
   grad = fuji_quant_gradient(params, Rb - Rc, Rc - Ra);
   gradient = _abs(grad);
 
-  if ((Rb > Rc && Rb > Rd) || (Rb < Rc && Rb < Rd))
-    interp_val = (Rg + Ra + 2 * Rb) >> 2;
-  else
-    interp_val = (Ra + Rg) >> 1;
+  // weighted avg
+  if ((Rb > Rc && Rb > Rd) || (Rb < Rc && Rb < Rd)) {
+    interp_val = (Rg + Ra + 2 * Rb) / 4;
+  } else {
+    interp_val = (Ra + Rg) / 2;
+  }
 
   // store the number of 1s into 'sample'
   fuji_zerobits(info, &sample);
 
+  // this bit is the same as for even
   if (sample < params->max_bits - params->raw_bits - 1)
   {
     int decBits = bitDiff(grads[gradient].value1, grads[gradient].value2);
@@ -646,13 +747,17 @@ static inline int fuji_decode_sample_odd(struct fuji_compressed_block *info,
     code++;
   }
 
-  if (code < 0 || code >= params->total_values)
+  if (code < 0 || code >= params->total_values) {
+    assert(false);
     errcnt++;
+  }
 
-  if (code & 1)
+  // same as for decode_sample_even
+  if (code & 1) {
     code = -1 - code / 2;
-  else
+  } else {
     code /= 2;
+  }
 
   grads[gradient].value1 += _abs(code);
   if (grads[gradient].value2 == params->min_value)
@@ -665,15 +770,9 @@ static inline int fuji_decode_sample_odd(struct fuji_compressed_block *info,
     interp_val -= code;
   else
     interp_val += code;
-  if (interp_val < 0)
-    interp_val += params->total_values;
-  else if (interp_val > params->q_point[4])
-    interp_val -= params->total_values;
 
-  if (interp_val >= 0)
-    line_buf_cur[0] = _min(interp_val, params->q_point[4]);
-  else
-    line_buf_cur[0] = 0;
+  interp_val &= (params->total_values - 1);
+  line_buf_cur[0] = interp_val;
   return errcnt;
 }
 
@@ -694,15 +793,27 @@ static void fuji_decode_interpolation_even(int line_width, ushort *line_buf, int
   int Rc = line_buf_cur[-3 - line_width];
   int Rd = line_buf_cur[-1 - line_width];
   int Rf = line_buf_cur[-4 - 2 * line_width];
-  int diffRcRb = _abs(Rc - Rb);
-  int diffRfRb = _abs(Rf - Rb);
-  int diffRdRb = _abs(Rd - Rb);
+  int diffRcRb = _abs(Rc - Rb); // 504
+  int diffRfRb = _abs(Rf - Rb); // 486
+  int diffRdRb = _abs(Rd - Rb); // 504
+  // true false
   if (diffRcRb > diffRfRb && diffRcRb > diffRdRb)
     *line_buf_cur = (Rf + Rd + 2 * Rb) >> 2;
+  // false true
   else if (diffRdRb > diffRcRb && diffRdRb > diffRfRb)
     *line_buf_cur = (Rf + Rc + 2 * Rb) >> 2;
   else
+    // 2067 + 2067 + 2*1563 = 7260 / 4 = 1815
     *line_buf_cur = (Rd + Rc + 2 * Rb) >> 2;
+
+  if (*line_buf_cur == 1815) {
+    // Rc    Rd    Rf
+    // 2067, 2067, 2049
+    // Rb = 1563
+    //
+
+    //printf("val %u, rc %u rb %u rd %u rf %u\n", *line_buf_cur, Rc, Rb, Rd, Rf);
+  }
 }
 
 static void fuji_extend_generic(ushort *linebuf[_ltotal], int line_width, int start, int end)
@@ -750,9 +861,13 @@ void LibRaw::xtrans_decode_block(struct fuji_compressed_block *info, const struc
   // == 768 * 2 / 3 = 512... TODO how does this relate to anything though?
   const int line_width = params->line_width;
 
+/*
   for (int i = _R0; i <= _B4; i++)  {
-    //printf("lineidx == %d, offset == %p\n", i, info->linebuf[i]);
+    printf("lineidx == %d, offset == %p\n", i, info->linebuf[i]);
   }
+  */
+
+ DUMP = cur_line < 2 && BLOCK == 0;
 
   while (g_even_pos < line_width || g_odd_pos < line_width)
   {
@@ -791,6 +906,13 @@ void LibRaw::xtrans_decode_block(struct fuji_compressed_block *info, const struc
     // etc.
   }
 
+/*
+  printf("G2\n\n");
+  for (int i = 0; i < line_width; i++) {
+    printf("%d,\n", info->linebuf[_G2][1 + i]);
+  }
+  */
+
   //backfill the edges
   fuji_extend_red(info->linebuf, line_width);
   fuji_extend_green(info->linebuf, line_width);
@@ -798,6 +920,7 @@ void LibRaw::xtrans_decode_block(struct fuji_compressed_block *info, const struc
   g_even_pos = 0, g_odd_pos = 1;
 
   // I'm pretty confused why these go two at a time
+  // Oh, it's because, in each loop, they use the same gradient thingy. So I need to figure out what's going on with the gradients before I can unroll these into separate loops.
   while (g_even_pos < line_width || g_odd_pos < line_width)
   {
     if (g_even_pos < line_width)
@@ -1131,6 +1254,7 @@ void LibRaw::fuji_decode_strip(const struct fuji_compressed_params *info_common,
   // So, each strip contains (block_width * raw_height) u16s == 3_101_184
   // Each 'line' is 3101184 / total_lines == 4608
   // So maybe xtrans_decode_block should process that?
+  BLOCK = cur_block;
   for (cur_line = 0; cur_line < libraw_internal_data.unpacker_data.fuji_total_lines; cur_line++)
   {
     if (libraw_internal_data.unpacker_data.fuji_raw_type == 16) {
@@ -1155,6 +1279,24 @@ void LibRaw::fuji_decode_strip(const struct fuji_compressed_params *info_common,
       copy_line_to_xtrans(&info, cur_line, cur_block, cur_block_width);
     else
       copy_line_to_bayer(&info, cur_line, cur_block, cur_block_width);
+
+    // if (cur_block == 0 && cur_line < 3) {
+    //   char label[50];
+    //   printf("Carry Results!!\n");
+    //   sprintf(label, "R0");
+    //   dumparray(label, info.linebuf[_R0], 512);
+    //   sprintf(label, "R1");
+    //   dumparray(label, info.linebuf[_R1], 512);
+    //   sprintf(label, "G0");
+    //   dumparray(label, info.linebuf[_G0], 512);
+    //   sprintf(label, "G1");
+    //   dumparray(label, info.linebuf[_G1], 512);
+    //   sprintf(label, "B0");
+    //   dumparray(label, info.linebuf[_B0], 512);
+    //   sprintf(label, "B1");
+    //   dumparray(label, info.linebuf[_B1], 512);
+    //   printf("End Carry Results!!\n");
+    // }
 
     for (int i = 0; i < 3; i++)
     {
@@ -1195,7 +1337,7 @@ void LibRaw::fuji_compressed_load_raw()
   // 8 * sizeof(unsigned)?? == 32 bits == 4 bytes?
   // So this is 8 * 4 = 32
   raw_offset = sizeof(unsigned) * libraw_internal_data.unpacker_data.fuji_total_blocks;
-  printf("raw_offset == %d, sizeof(unsigned) == %d\n", raw_offset, sizeof(unsigned));
+  printf("raw_offset == %lld, sizeof(unsigned) == %lu\n", raw_offset, sizeof(unsigned));
   // if either bit 3 or 2 are set
   // I don't think this is even necessary.
   /*
@@ -1209,7 +1351,7 @@ void LibRaw::fuji_compressed_load_raw()
 
   // Add in relation to data_offset; it's relative to the file.
   raw_offset += libraw_internal_data.unpacker_data.data_offset;
-  printf("raw_offset is %d\n", raw_offset);
+  printf("raw_offset is %lld\n", raw_offset);
   libraw_internal_data.internal_data.input->seek(libraw_internal_data.unpacker_data.data_offset, SEEK_SET);
   // Read 32 bytes into the block sizes array
   libraw_internal_data.internal_data.input->read(
